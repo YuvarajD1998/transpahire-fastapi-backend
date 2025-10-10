@@ -1,0 +1,39 @@
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+sqlalchemy[asyncio]==2.0.23
+asyncpg==0.29.0
+alembic==1.12.1
+pydantic==2.5.0
+pydantic-settings==2.1.0
+httpx==0.25.2
+aiofiles==23.2.1
+python-multipart==0.0.6
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+slowapi==0.1.9
+redis==5.0.1
+psycopg2-binary==2.9.9
+pytesseract
+pillow
+pdf2image
+openai
+python-docx
+PyPDF2
+google-genai>=1.38.0 
+python-dateutil>=2.8.2
+
+
+# File processing
+PyPDF2==3.0.1
+python-docx==1.1.0
+
+# AWS S3 (optional)
+boto3==1.34.0
+botocore==1.34.0
+
+# Development
+pytest==7.4.3
+pytest-asyncio==0.21.1
+black==23.11.0
+isort==5.12.0
+mypy==1.7.1
