@@ -58,6 +58,10 @@ class SkillSource(str, Enum):
     AI_EXTRACTED = "AI_EXTRACTED"
     VERIFIED = "VERIFIED"
 
+class SkillType(str, Enum):
+    TECHNICAL = "TECHNICAL"
+    SOFT = "SOFT"
+
 
 # Fixed: Match Prisma enum values (UPPERCASE not lowercase)
 class ProficiencyLevel(str, Enum):

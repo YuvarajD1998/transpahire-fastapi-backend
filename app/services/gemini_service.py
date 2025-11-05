@@ -1,3 +1,4 @@
+# app/services/gemini_service.py
 import json
 import re
 import asyncio
@@ -6,7 +7,7 @@ from typing import Dict, Any, List, Optional
 import google.genai as genai
 from google.genai import types
 from app.config import settings
-from app.models.schemas import ParsedResumeData, ParsedSkill, ParsedExperience, ParsedEducation
+from app.models.schemas import ParsedResumeData, ParsedSkill, ParsedTechnicalSkill, ParsedSoftSkill, ParsedExperience, ParsedEducation
 
 
 class GeminiService:
@@ -54,83 +55,119 @@ class GeminiService:
 
     def _create_structured_prompt(self, resume_text: str) -> str:
         """Create a structured prompt for Gemini to extract resume data."""
-        return f"""You are an expert resume parser. Extract structured information from this resume and return ONLY valid JSON.
+        return f"""You are an expert resume parser and HR data architect. Extract structured, detailed information from this resume text and return ONLY valid JSON, with no explanations or comments.
 
-Resume Text:
-{resume_text[:16000]}
+        Resume Text:
+        {resume_text[:16000]}
 
-Return a JSON object with this exact structure:
-{{
-    "personal_info": {{
-        "name": "Full name or null",
-        "email": "Email address or null",
-        "phone": "Phone number or null",
-        "location": "Location/address or null",
-        "linkedin": "LinkedIn URL or null",
-        "github": "GitHub URL or null"
-    }},
-    "skills": [
+        Return a JSON object with this exact structure:
         {{
-            "name": "Skill name",
-            "category": "Programming/Web/Database/Cloud/Data Science/Tools/Soft Skills",
-            "level": "Beginner/Intermediate/Expert",
-            "years_experience": null
+            "personal_info": {{
+                "name": "Full name or null",
+                "email": "Email address or null",
+                "phone": "Phone number or null",
+                "location": "City, State, Country or null",
+                "linkedin": "LinkedIn profile URL or null",
+                "github": "GitHub or portfolio URL or null",
+                "website": "Personal/portfolio website or null"
+            }},
+            "summary": "Professional summary or null",
+            "skills": {{
+                "technical_skills": [
+                    {{
+                        "name": "Skill name",
+                        "category": "Software Development/Data Science/Cloud/DevOps/Cybersecurity/Testing/Design/Business/Finance/Marketing/Sales/Operations/Manufacturing/Healthcare/Education/Creative/Service",
+                        "level": "Beginner/Intermediate/Advanced/Expert",
+                        "years_experience": null
+                    }}
+                ],
+                "soft_skills": [
+                    {{
+                        "name": "Soft skill name",
+                        "level": "Beginner/Intermediate/Advanced"
+                    }}
+                ]
+            }},
+            "experience": [
+                {{
+                    "company": "Company name",
+                    "position": "Job title",
+                    "location": "City, Country or null",
+                    "industry": "Industry or domain (IT, Healthcare, Finance, Education, Manufacturing, etc.)",
+                    "start_date": "YYYY-MM-DD or null",
+                    "end_date": "YYYY-MM-DD or null",
+                    "is_current": false,
+                    "description": "Role summary and responsibilities",
+                    "achievements": ["Achievement 1", "Achievement 2"],
+                    "skills_used": ["Skill 1", "Skill 2", "Skill 3"]
+                }}
+            ],
+            "education": [
+                {{
+                    "institution": "University or school name",
+                    "degree": "Degree type or null (e.g., B.Tech, MBA, Diploma)",
+                    "field": "Field of study or specialization or null",
+                    "start_date": "YYYY-MM-DD or null",
+                    "end_date": "YYYY-MM-DD or null",
+                    "grade": "GPA or percentage or null",
+                    "description": "Additional academic details or projects"
+                }}
+            ],
+            "certifications": [
+                {{
+                    "name": "Certification name",
+                    "organization": "Issuing body or null",
+                    "issue_date": "YYYY-MM-DD or null",
+                    "expiry_date": "YYYY-MM-DD or null"
+                }}
+            ],
+            "projects": [
+                {{
+                    "name": "Project name",
+                    "description": "Project summary and objective",
+                    "technologies": ["Tech 1", "Tech 2"],
+                    "role": "Role or contribution",
+                    "start_date": "YYYY-MM-DD or null",
+                    "end_date": "YYYY-MM-DD or null"
+                }}
+            ],
+            "languages": [
+                {{
+                    "name": "Language name",
+                    "proficiency": "Basic/Intermediate/Fluent/Native"
+                }}
+            ]
         }}
-    ],
-    "experience": [
-        {{
-            "company": "Company name",
-            "position": "Job title",
-            "location": "Work location or null",
-            "start_date": "YYYY-MM-DD or null",
-            "end_date": "YYYY-MM-DD or null",
-            "is_current": false,
-            "description": "Job description",
-            "achievements": ["Achievement 1", "Achievement 2"],
-            "skills": ["Skill 1", "Skill 2"]
-        }}
-    ],
-    "education": [
-        {{
-            "institution": "School/University name",
-            "degree": "Degree type or null",
-            "field": "Field of study or null",
-            "start_date": "YYYY-MM-DD or null",
-            "end_date": "YYYY-MM-DD or null",
-            "grade": "GPA/Grade or null",
-            "description": "Additional details or null"
-        }}
-    ],
-    "summary": "Professional summary or null"
-}}
 
-Instructions:
-1. Extract information accurately from the resume text
-2. Use null for missing information
-3. Categorize skills appropriately
-4. Format dates as YYYY-MM-DD when possible
-5. Return ONLY the JSON object, no additional text
+        Instructions:
+        1. Extract all available information accurately from the resume text.
+        2. Use null for missing or unavailable fields.
+        3. Separate technical and soft skills clearly:
+           - Technical skills include software, tools, platforms, and domain-specific expertise.
+           - Soft skills include interpersonal and behavioral attributes (e.g., communication, teamwork).
+        4. Categorize each technical skill into its closest relevant domain from the allowed taxonomy list.
+        5. Maintain clean JSON formatting — ensure it can be parsed directly with no extra text.
+        6. Format dates in YYYY-MM-DD format when possible.
+        7. Do NOT include commentary, markdown, or explanations outside of the JSON.
 
-JSON Output:"""
+        JSON Output:"""
 
     def _normalize_date(self, date_str: Optional[str]) -> Optional[str]:
         """Convert a date string (YYYY-MM-DD) to ISO format string for JSON serialization."""
         if not date_str:
             return None
         try:
-            # Parse the date and return as ISO string instead of datetime object
             dt = datetime.fromisoformat(date_str)
             return dt.isoformat()
         except ValueError:
             return None
 
     def _parse_gemini_response(self, response) -> ParsedResumeData:
-        """Parse Gemini's JSON response into structured data."""
+        """Parse Gemini's JSON response into structured data with technical and soft skills separated."""
         try:
-            # If response is a string, parse directly
+            # Extract response text
             if isinstance(response, str):
                 content_text = response
-            # If response has candidates (older SDK style)
             elif hasattr(response, "candidates") and response.candidates:
                 candidate = response.candidates[0]
                 content_text = ""
@@ -142,10 +179,9 @@ JSON Output:"""
             else:
                 raise ValueError("Unexpected Gemini response format")
 
-            # Console log the raw response before validation
             print("=== GEMINI RAW RESPONSE ===")
             print(f"Response type: {type(response)}")
-            print(f"Content text: {content_text}")
+            print(f"Content text length: {len(content_text)}")
             print("=== END RAW RESPONSE ===")
 
             # Extract JSON from the text
@@ -155,27 +191,41 @@ JSON Output:"""
                 raise ValueError("No JSON found in Gemini response")
 
             json_text = json_match.group()
-            print(f"=== EXTRACTED JSON ===")
-            print(json_text)
-            print("=== END EXTRACTED JSON ===")
-
             obj = json.loads(json_text)
             
             print(f"=== PARSED OBJECT ===")
             print(f"Parsed JSON keys: {list(obj.keys()) if isinstance(obj, dict) else 'Not a dict'}")
             print("=== END PARSED OBJECT ===")
 
-            # Map skills
-            skills = [
-                ParsedSkill(
-                    name=s.get("name", ""),
-                    category=s.get("category", "General"),
-                    proficiency_level=s.get("level", "Intermediate"),
-                    years_experience=s.get("years_experience"),
-                )
-                for s in obj.get("skills", [])
-                if isinstance(s, dict) and s.get("name")
-            ]
+            # ✨ NEW: Parse skills with technical/soft separation
+            skills_data = obj.get("skills", {})
+            
+            # Technical skills
+            technical_skills = []
+            for s in skills_data.get("technical_skills", []):
+                if isinstance(s, dict) and s.get("name"):
+                    technical_skills.append(
+                        ParsedTechnicalSkill(
+                            name=s.get("name", ""),
+                            category=s.get("category"),
+                            proficiency_level=s.get("level", "Intermediate"),
+                            years_experience=s.get("years_experience"),
+                        )
+                    )
+            
+            # Soft skills
+            soft_skills = []
+            for s in skills_data.get("soft_skills", []):
+                if isinstance(s, dict) and s.get("name"):
+                    soft_skills.append(
+                        ParsedSoftSkill(
+                            name=s.get("name", ""),
+                            proficiency_level=s.get("level", "Intermediate"), 
+                        )
+                    )
+
+            
+            print(f"✅ Extracted {len(technical_skills)} technical skills, {len(soft_skills)} soft skills")
 
             # Map experience with string dates
             experience = [
@@ -188,7 +238,7 @@ JSON Output:"""
                     is_current=e.get("is_current", False),
                     description=e.get("description") or "",
                     achievements=e.get("achievements", []),
-                    skills=e.get("skills", []),
+                    skills=e.get("skills_used", []),
                 )
                 for e in obj.get("experience", [])
                 if isinstance(e, dict) and e.get("company")
@@ -211,7 +261,10 @@ JSON Output:"""
 
             return ParsedResumeData(
                 personal_info=obj.get("personal_info", {}),
-                skills=skills,
+                skills=ParsedSkill(
+                    technical_skills=technical_skills,
+                    soft_skills=soft_skills
+                ),
                 experience=experience,
                 education=education,
                 summary=obj.get("summary"),
@@ -225,7 +278,7 @@ JSON Output:"""
             print("=== END PARSING ERROR ===")
             return ParsedResumeData(
                 personal_info={},
-                skills=[],
+                skills=ParsedSkill(technical_skills=[], soft_skills=[]),
                 experience=[],
                 education=[],
                 summary=None,

@@ -10,7 +10,7 @@ from datetime import datetime
 
 from app.models.enums import (
     Role, SubscriptionTier, ParseStatus, SkillSource, 
-    ProficiencyLevel, UserStatus, PrivacyMode
+    ProficiencyLevel, UserStatus, PrivacyMode,SkillType
 )
 
 Base = declarative_base()
@@ -23,6 +23,8 @@ parse_status_enum = ENUM(ParseStatus, name='ParseStatus', create_type=False)
 skill_source_enum = ENUM(SkillSource, name='SkillSource', create_type=False)
 proficiency_level_enum = ENUM(ProficiencyLevel, name='ProficiencyLevel', create_type=False)
 user_status_enum = ENUM(UserStatus, name='UserStatus', create_type=False)
+skill_type_enum = ENUM(SkillType, name='SkillType', create_type=False)
+
 
 class User(Base):
     __tablename__ = "users"
@@ -107,26 +109,66 @@ class ResumeCritique(Base):
     
     resume = relationship("Resume", back_populates="critiques")
 
+class SkillTaxonomy(Base):
+    __tablename__ = "skill_taxonomy"
+
+    id = Column(Integer, primary_key=True, index=True)
+    skill_name = Column(String, nullable=False)
+    normalized_name = Column(String, unique=True, nullable=False, index=True)
+    parent_skill = Column(String, nullable=True, index=True)
+    skill_level = Column(Integer, nullable=False, index=True)
+    synonyms = Column(JSON, nullable=True)
+    related_skills = Column(JSON, nullable=True)
+    specializations = Column(JSON, nullable=True)
+    industry_relevance = Column(JSON, nullable=True)
+    skill_weight = Column(Float, default=0.5)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class NonTaxonomySkill(Base):
+    __tablename__ = "non_taxonomy_skills"
+
+    id = Column(Integer, primary_key=True, index=True)
+    skill_name = Column(String, nullable=False)
+    normalized_name = Column(String, nullable=False, index=True)
+    source = Column(String, nullable=False)
+    source_id = Column(Integer, nullable=True)
+    frequency = Column(Integer, default=1)
+    reviewed = Column(Boolean, default=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    __table_args__ = (
+        Index('idx_normalized_source_sourceid', 'normalized_name', 'source', 'source_id', unique=True),
+    )
+
+
+
 class ProfileSkill(Base):
     __tablename__ = "profile_skills"
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=False)
+
+    id = Column(Integer, primary_key=True, index=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id", ondelete="CASCADE"), nullable=False, index=True)
     skill_name = Column(String, nullable=False)
     category = Column(String, nullable=True)
     proficiency_level = Column(proficiency_level_enum, nullable=True)
     years_experience = Column(Integer, nullable=True)
-    source = Column(skill_source_enum, nullable=False)
-    verified = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, server_default=func.now(), onupdate=datetime.utcnow, nullable=False)
-    
+    source = Column(skill_source_enum, default=SkillSource.AI_EXTRACTED)
+    verified = Column(Boolean, default=False)
+    skill_type = Column(skill_type_enum, default=SkillType.TECHNICAL)
+
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
     profile = relationship("Profile", back_populates="profile_skills")
-    
+
     __table_args__ = (
-        UniqueConstraint("profile_id", "skill_name", name="uq_profile_skills_profile_id_skill_name"),
-        Index("idx_profile_skills_profile_id", "profile_id"),
+        Index('idx_profile_skill_unique', 'profile_id', 'skill_name', unique=True),
     )
+
+
 
 class Subscription(Base):
     __tablename__ = "subscriptions"

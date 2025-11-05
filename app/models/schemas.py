@@ -8,35 +8,44 @@ class ResumeUpload(BaseModel):
     filename: str
     is_primary: bool = False
 
-class ParsedSkill(BaseModel):
+class ParsedTechnicalSkill(BaseModel):
     name: str
     category: Optional[str] = None
-    proficiency_level: Optional[ProficiencyLevel] = None
+    proficiency_level: Optional[ProficiencyLevel] = None  
     years_experience: Optional[int] = None
+
+
+class ParsedSoftSkill(BaseModel):
+    name: str
+    proficiency_level: Optional[ProficiencyLevel] = ProficiencyLevel.INTERMEDIATE 
+    category: Optional[str] = None  
+
+
+class ParsedSkill(BaseModel):
+    technical_skills: List[ParsedTechnicalSkill] = []
+    soft_skills: List[ParsedSoftSkill] = []
 
 class ParsedExperience(BaseModel):
     company: str
     position: str
     location: Optional[str] = None
-    start_date: Optional[str] = None  # Changed from datetime to str
-    end_date: Optional[str] = None    # Changed from datetime to str
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
     is_current: bool = False
     description: Optional[str] = None
     achievements: List[str] = []
-    skills: List[str] = []
 
 class ParsedEducation(BaseModel):
     institution: str
-    degree: Optional[str] = "Not specified"
+    degree: str
     field: Optional[str] = None
-    start_date: Optional[str] = None  # Changed from datetime to str
-    end_date: Optional[str] = None    # Changed from datetime to str
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
     grade: Optional[str] = None
-    description: Optional[str] = None
 
 class ParsedResumeData(BaseModel):
     personal_info: Dict[str, Any] = {}
-    skills: List[ParsedSkill] = []
+    skills: ParsedSkill = Field(default_factory=ParsedSkill)
     experience: List[ParsedExperience] = []
     education: List[ParsedEducation] = []
     summary: Optional[str] = None

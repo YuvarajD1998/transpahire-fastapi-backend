@@ -1,4 +1,4 @@
-# resumes.py
+# app/routers/resumes.py
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Form
 from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,16 +6,18 @@ import asyncio
 
 from app.database import get_db
 from app.dependencies import get_current_user, require_subscription
-from app.models.enums import ParseStatus, SubscriptionTier,SkillSource
-from app.models.schemas import CritiqueSection, CritiqueSections, ResumeResponse, ResumeCritiqueResponse, ParsedResumeData, CritiqueData, ResumeCritiqueResponse,SetPrimaryResumeRequest,SetPrimaryResumeResponse
+from app.models.enums import ParseStatus, SubscriptionTier, SkillSource
+from app.models.schemas import (
+    CritiqueSection, CritiqueSections, ResumeResponse, ResumeCritiqueResponse, 
+    ParsedResumeData, CritiqueData, SetPrimaryResumeRequest, SetPrimaryResumeResponse
+)
 from app.services.file_service import FileService, ResumeParserService
 from app.services.critique_service import CritiqueService
 from app.utils.file_utils import validate_upload
 from app.crud.resume_crud import ProfileCRUD, ResumeCRUD, ResumeCritiqueCRUD
 from app.database import db_manager
 from app.services.resume_parsing_service import ResumeDataService
-from app.services.critique_service import CritiqueService
-
+from app.services.taxonomy_service import TaxonomyService
 
 router = APIRouter(prefix="/resumes", tags=["resumes"])
 
@@ -26,9 +28,9 @@ async def parse_and_process_resume_background(
     file_content: bytes, 
     filename: str, 
     enhance_images: bool,
-    is_primary: bool  # Add this parameter
+    is_primary: bool
 ):
-    """Enhanced background task with conditional embedding generation."""
+    """Enhanced background task with taxonomy validation and conditional embedding generation."""
     max_retries = 3
     retry_delay = 2
     
@@ -54,7 +56,43 @@ async def parse_and_process_resume_background(
                     else dict(parsed_data)
                 )
                 
-                # Update with parsed data
+                # ✨ NEW: Extract and validate skills against taxonomy
+                taxonomy_service = TaxonomyService()
+                
+                # Extract technical skills from parsed data
+                technical_skills = []
+                if hasattr(parsed_data, 'skills') and hasattr(parsed_data.skills, 'technical_skills'):
+                    technical_skills = [
+                        {
+                            "name": skill.name,
+                            "category": skill.category,
+                            "level": skill.proficiency_level or "INTERMEDIATE",
+                            "years_experience": skill.years_experience
+                        }
+                        for skill in parsed_data.skills.technical_skills
+                    ]
+                
+                # Extract soft skills from parsed data
+                soft_skills = []
+                if hasattr(parsed_data, 'skills') and hasattr(parsed_data.skills, 'soft_skills'):
+                    soft_skills = [
+                        {
+                            "name": skill.name,
+                            "level": skill.proficiency_level or "INTERMEDIATE"  
+                        }
+                        for skill in parsed_data.skills.soft_skills
+                    ]
+                
+                # Process skills through taxonomy validation
+                skill_results =await taxonomy_service.process_resume_skills(
+                    db=db_session,
+                    profile_id=profile_id,
+                    resume_id=resume_id,
+                    technical_skills=technical_skills,
+                    soft_skills=soft_skills
+                )
+                
+                # Update resume with parsed data
                 await ResumeCRUD.update_resume(
                     db_session, 
                     resume_id, 
@@ -75,13 +113,13 @@ async def parse_and_process_resume_background(
                         db_session, profile_id, resume_id, parsed_data_dict
                     )
                 else:
-                    # NON-PRIMARY RESUME: Store only raw+structured JSON, no embeddings, no DB insertion
+                    # NON-PRIMARY RESUME: Store only raw+structured JSON, no embeddings
                     print(f"Storing NON-PRIMARY resume {resume_id} - raw JSON only, no embeddings")
-                    # The parsed_data is already stored in the resume record above
-                    # No need to insert skills, experience, education into separate tables
-                    # No embedding generation
                 
-                print(f"Successfully processed resume {resume_id} (is_primary={is_primary}) on attempt {attempt + 1}")
+                print(f"✅ Successfully processed resume {resume_id} (is_primary={is_primary})")
+                print(f"   📊 Skills: {len(skill_results['technical_matched'])} matched, "
+                      f"{len(skill_results['technical_unmatched'])} unmatched, "
+                      f"{len(skill_results['soft_skills'])} soft skills")
                 return
                 
             except Exception as e:
@@ -93,9 +131,9 @@ async def parse_and_process_resume_background(
                         {"parse_status": ParseStatus.FAILED}
                     )
                     await db_session.commit()
-                    print(f"Background parsing failed for resume {resume_id} after {max_retries} attempts: {e}")
+                    print(f"❌ Background parsing failed for resume {resume_id} after {max_retries} attempts: {e}")
                 else:
-                    print(f"Attempt {attempt + 1} failed for resume {resume_id}: {e}")
+                    print(f"⚠️  Attempt {attempt + 1} failed for resume {resume_id}: {e}")
                     await asyncio.sleep(retry_delay * (attempt + 1))
                 break
 
@@ -104,16 +142,15 @@ async def parse_and_process_resume_background(
 async def upload_resume(
     background: BackgroundTasks,
     file: UploadFile = File(...),
-    is_primary: bool = Form(False),  # Changed from query param to form field
+    is_primary: bool = Form(False),
     enhance_images: bool = Form(True),
-    profile_id: int = Form(...),  # Add these for direct access
+    profile_id: int = Form(...),
     resume_id: Optional[int] = Form(None),
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Upload resume with conditional processing based on is_primary flag."""
     
-    from app.utils.file_utils import validate_upload
     validate_upload(file)
     
     # Handle user as dict or object
@@ -133,9 +170,8 @@ async def upload_resume(
     fs = FileService()
     file_path = await fs.save_file(content, file.filename, file.content_type)
     
-    # Create resume record
+    # Create or update resume record
     if resume_id:
-        # Update existing resume
         resume = await ResumeCRUD.get_resume_by_id(db, resume_id, profile.id)
         if not resume:
             raise HTTPException(status_code=404, detail="Resume not found")
@@ -153,7 +189,6 @@ async def upload_resume(
             }
         )
     else:
-        # Create new resume
         resume = await ResumeCRUD.create_resume(
             db=db,
             profile_id=profile.id,
@@ -177,7 +212,7 @@ async def upload_resume(
         content, 
         file.filename, 
         enhance_images,
-        is_primary  # Pass the flag
+        is_primary
     )
     
     return ResumeResponse(
@@ -193,6 +228,7 @@ async def upload_resume(
         created_at=resume.created_at,
         parsed_data=None
     )
+
 
 
 @router.post("/{resume_id}/set-primary", response_model=SetPrimaryResumeResponse)
