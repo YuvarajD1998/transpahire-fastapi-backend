@@ -10,7 +10,7 @@ from slowapi.errors import RateLimitExceeded
 from app.config import settings
 from app.database import db_manager
 from app.middleware.errorhandler import ErrorHandlerMiddleware, setup_exception_handlers
-from app.routers import health, resumes, profiles
+from app.routers import health, resumes, profiles, embeddings
 
 # Configure logging
 logging.basicConfig(
@@ -63,6 +63,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router, prefix=settings.API_V1_PREFIX)
     app.include_router(resumes.router, prefix=settings.API_V1_PREFIX)
     app.include_router(profiles.router, prefix=settings.API_V1_PREFIX)
+    app.include_router(embeddings.router, prefix=settings.API_V1_PREFIX)
 
     return app
 

@@ -21,6 +21,16 @@ python-docx
 PyPDF2
 google-genai>=1.38.0 
 python-dateutil>=2.8.2
+pgvector==0.2.4
+numpy
+scipy
+scikit-learn
+hdbscan
+umap-learn
+tqdm
+python-dotenv
+
+
 
 
 # File processing

@@ -3,16 +3,20 @@ from typing import List, Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
-from sqlalchemy import and_, or_, update, delete
+from sqlalchemy import and_, func, or_, update, delete
 from datetime import datetime
 from dateutil import parser as date_parser
 
 from app.models.database_models import (
-    Profile, Resume, ResumeCritique, ProfileSkill, 
+    Profile, Resume, ResumeCritique, ProfileSkill, SkillTaxonomy, 
     WorkExperience, Education  # Add these imports
 )
 from app.models.enums import ParseStatus, SkillSource, ProficiencyLevel
 from app.models.schemas import ProfileUpdateRequest, ParsedResumeData
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 
 # Add these new CRUD classes
@@ -165,6 +169,8 @@ class ProfileSkillCRUD:
         source: SkillSource = SkillSource.AI_EXTRACTED,
         verified: bool = False
     ) -> ProfileSkill:
+        """Create a new profile skill with proper timestamp handling"""
+        
         skill = ProfileSkill(
             profile_id=profile_id,
             skill_name=skill_name,
@@ -172,13 +178,21 @@ class ProfileSkillCRUD:
             proficiency_level=proficiency_level,
             years_experience=years_experience,
             source=source,
-            verified=verified
+            verified=verified,
+            created_at=datetime.utcnow(),  # ✅ FIXED
+            updated_at=datetime.utcnow()   # ✅ FIXED
         )
         
         db.add(skill)
-        await db.commit()
-        await db.refresh(skill)
-        return skill
+        
+        try:
+            await db.commit()
+            await db.refresh(skill)
+            return skill
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"Error creating skill {skill_name}: {e}")
+            raise
     
     @staticmethod
     async def get_by_profile_id(db: AsyncSession, profile_id: int) -> List[ProfileSkill]:
@@ -196,6 +210,46 @@ class ProfileSkillCRUD:
         )
         await db.commit()
     
+
+    @staticmethod
+    async def _log_unmatched_skill(db: AsyncSession, skill_name: str, profile_id: int):
+        """Log unmatched skills for future taxonomy expansion"""
+        try:
+            from app.models.database_models import NonTaxonomySkill
+            
+            normalized = skill_name.lower().strip()
+            
+            # Check if already logged
+            result = await db.execute(
+                select(NonTaxonomySkill).where(
+                    and_(
+                        NonTaxonomySkill.normalized_name == normalized,
+                        NonTaxonomySkill.source == 'PROFILE',
+                        NonTaxonomySkill.source_id == profile_id
+                    )
+                )
+            )
+            existing = result.scalar_one_or_none()
+            
+            if existing:
+                existing.frequency += 1
+                existing.updated_at = datetime.utcnow()
+            else:
+                unmatched = NonTaxonomySkill(
+                    skill_name=skill_name,
+                    normalized_name=normalized,
+                    source='PROFILE',
+                    source_id=profile_id,
+                    frequency=1
+                )
+                db.add(unmatched)
+            
+            await db.commit()
+            
+        except Exception as e:
+            logger.error(f"Error logging unmatched skill: {e}")
+            # Don't raise - this is non-critical
+
     @staticmethod
     async def upsert_skill(
         db: AsyncSession,
@@ -206,35 +260,103 @@ class ProfileSkillCRUD:
         years_experience: Optional[int] = None,
         source: SkillSource = SkillSource.AI_EXTRACTED
     ) -> ProfileSkill:
-        # Check if skill already exists
-        result = await db.execute(
-            select(ProfileSkill).where(
-                and_(
-                    ProfileSkill.profile_id == profile_id,
-                    ProfileSkill.skill_name == skill_name
+        """
+        Upsert skill: update if exists, create if not.
+        ✅ ENHANCED: Upsert skill with taxonomy linking
+        """
+        try:
+            # ✅ Step 1: Find matching taxonomy entry
+            skill_taxonomy_id = None
+            normalized_skill = skill_name.lower().strip()
+            
+            # Try exact match first
+            taxonomy_result = await db.execute(
+                select(SkillTaxonomy).where(
+                    func.lower(SkillTaxonomy.normalized_name) == normalized_skill
                 )
             )
-        )
-        existing_skill = result.scalar_one_or_none()
-        
-        if existing_skill:
-            # Update existing skill
-            if category:
-                existing_skill.category = category
-            if proficiency_level:
-                existing_skill.proficiency_level = proficiency_level
-            if years_experience:
-                existing_skill.years_experience = years_experience
-            existing_skill.updated_at = datetime.utcnow()
-            await db.commit()
-            await db.refresh(existing_skill)
-            return existing_skill
-        else:
-            # Create new skill
-            return await ProfileSkillCRUD.create_skill(
-                db, profile_id, skill_name, category, 
-                proficiency_level, years_experience, source
+            taxonomy = taxonomy_result.scalar_one_or_none()
+            
+            if taxonomy:
+                skill_taxonomy_id = taxonomy.id
+                # Use canonical name from taxonomy
+                skill_name = taxonomy.skill_name
+                # Use category from taxonomy if not provided
+                if not category:
+                    category = taxonomy.skill_name  # Or extract from industry_relevance
+                
+                logger.info(f"✅ Matched skill '{skill_name}' to taxonomy ID {skill_taxonomy_id}")
+            else:
+                # Try synonym match
+                taxonomy_result = await db.execute(
+                    select(SkillTaxonomy).where(
+                        SkillTaxonomy.synonyms.contains([normalized_skill])
+                    )
+                )
+                taxonomy = taxonomy_result.scalar_one_or_none()
+                
+                if taxonomy:
+                    skill_taxonomy_id = taxonomy.id
+                    skill_name = taxonomy.skill_name
+                    logger.info(f"✅ Matched skill '{skill_name}' to taxonomy ID {skill_taxonomy_id} via synonym")
+                else:
+                    # Log unmatched skill to non_taxonomy_skills
+                    logger.warning(f"⚠️ No taxonomy match found for skill: {skill_name}")
+                    await ProfileSkillCRUD._log_unmatched_skill(db, skill_name, profile_id)
+            
+            # ✅ Step 2: Check if skill already exists for this profile
+            result = await db.execute(
+                select(ProfileSkill).where(
+                    and_(
+                        ProfileSkill.profile_id == profile_id,
+                        ProfileSkill.skill_name == skill_name
+                    )
+                )
             )
+            existing_skill = result.scalar_one_or_none()
+            
+            if existing_skill:
+                # Update existing skill
+                if skill_taxonomy_id:
+                    existing_skill.skill_taxonomy_id = skill_taxonomy_id
+                if category:
+                    existing_skill.category = category
+                if proficiency_level:
+                    existing_skill.proficiency_level = proficiency_level
+                if years_experience:
+                    existing_skill.years_experience = years_experience
+                existing_skill.updated_at = datetime.utcnow()
+                
+                await db.commit()
+                await db.refresh(existing_skill)
+                return existing_skill
+            else:
+                # ✅ Step 3: Create new skill with taxonomy link
+                new_skill = ProfileSkill(
+                    profile_id=profile_id,
+                    skill_name=skill_name,
+                    skill_taxonomy_id=skill_taxonomy_id,  # ✅ Link to taxonomy
+                    category=category,
+                    proficiency_level=proficiency_level,
+                    years_experience=years_experience,
+                    source=source,
+                    created_at=datetime.utcnow(),
+                    updated_at=datetime.utcnow()
+                )
+                
+                db.add(new_skill)
+                await db.commit()
+                await db.refresh(new_skill)
+                
+                logger.info(f"✅ Created skill '{skill_name}' with taxonomy_id={skill_taxonomy_id}")
+                return new_skill
+                
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"Error upserting skill {skill_name}: {e}")
+            raise
+    
+
 
 
 # Enhanced ProfileCRUD with new methods

@@ -109,6 +109,11 @@ class ResumeCritique(Base):
     
     resume = relationship("Resume", back_populates="critiques")
 
+try:
+    from pgvector.sqlalchemy import Vector
+except ImportError:
+    from sqlalchemy import TEXT as Vector
+
 class SkillTaxonomy(Base):
     __tablename__ = "skill_taxonomy"
 
@@ -122,8 +127,18 @@ class SkillTaxonomy(Base):
     specializations = Column(JSON, nullable=True)
     industry_relevance = Column(JSON, nullable=True)
     skill_weight = Column(Float, default=0.5)
+    
+    # pgvector fields
+    embedding = Column(Vector(768), nullable=True)
+    embedding_model = Column(String, nullable=True)
+    embedding_updated_at = Column(DateTime, nullable=True)
+    needs_embedding_update = Column(Boolean, default=False)
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    profile_skills = relationship("ProfileSkill", back_populates="skill_taxonomy")
+
 
 
 class NonTaxonomySkill(Base):
@@ -150,6 +165,7 @@ class ProfileSkill(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     profile_id = Column(Integer, ForeignKey("profiles.id", ondelete="CASCADE"), nullable=False, index=True)
+    skill_taxonomy_id = Column(Integer, ForeignKey("skill_taxonomy.id", ondelete="SET NULL"), nullable=True, index=True)
     skill_name = Column(String, nullable=False)
     category = Column(String, nullable=True)
     proficiency_level = Column(proficiency_level_enum, nullable=True)
@@ -163,6 +179,8 @@ class ProfileSkill(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     profile = relationship("Profile", back_populates="profile_skills")
+    skill_taxonomy = relationship("SkillTaxonomy", back_populates="profile_skills")  
+
 
     __table_args__ = (
         Index('idx_profile_skill_unique', 'profile_id', 'skill_name', unique=True),
