@@ -19,7 +19,7 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql://transpahire_user:transpahire_password_123@localhost:5432/transpahire_db"
 )
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyAdvFhvGWaIl_ZFlNo98-cBGGRMWd0uHs8")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 MODEL = "gemini-embedding-001"
 DIMENSIONS = 768
