@@ -3,14 +3,17 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Backgro
 from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 import asyncio
+import logging
+
 
 from app.database import get_db
 from app.dependencies import get_current_user, require_subscription
 from app.models.enums import ParseStatus, SubscriptionTier, SkillSource
 from app.models.schemas import (
-    CritiqueSection, CritiqueSections, ResumeResponse, ResumeCritiqueResponse, 
+    CritiqueSection, CritiqueSections, ParseRequest, ParseResponse, ResumeResponse, ResumeCritiqueResponse, 
     ParsedResumeData, CritiqueData, SetPrimaryResumeRequest, SetPrimaryResumeResponse
 )
+from app.services import parser_service
 from app.services.file_service import FileService, ResumeParserService
 from app.services.critique_service import CritiqueService
 from app.utils.file_utils import validate_upload
@@ -20,6 +23,9 @@ from app.services.resume_parsing_service import ResumeDataService
 from app.services.taxonomy_service import TaxonomyService
 
 router = APIRouter(prefix="/resumes", tags=["resumes"])
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 async def parse_and_process_resume_background(
@@ -228,6 +234,48 @@ async def upload_resume(
         created_at=resume.created_at,
         parsed_data=None
     )
+
+@router.post("/parse-resume", response_model=ParseResponse)
+async def parse_resume(
+    file: UploadFile = File(...),
+    resume_id: int = Form(...),
+    enhance_images: bool = Form(True)
+):
+    """
+    Parse resume from multipart/form-data upload.
+    Accepts file + metadata fields.
+    """
+    try:
+        # Read file content
+        file_content = await file.read()
+        
+        # Initialize parser
+        parser = ResumeParserService()
+        
+        # Parse the resume
+        parsed_data = await parser.parse(
+            file_content=file_content,
+            filename=file.filename,
+            enhance_images=enhance_images
+        )
+        
+        return ParseResponse(
+            success=True,
+            resume_id=resume_id,
+            parsed_data=parsed_data,
+            error=None,
+            confidence_score=parsed_data.confidence_score if parsed_data else 0.0
+        )
+        
+    except Exception as e:
+        logger.error(f"Parse failed: {str(e)}")
+        return ParseResponse(
+            success=False,
+            resume_id=resume_id,
+            parsed_data=None,
+            error=str(e),
+            confidence_score=0.0
+        )
 
 
 

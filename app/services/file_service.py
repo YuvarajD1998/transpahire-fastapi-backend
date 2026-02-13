@@ -124,6 +124,20 @@ class UnstructuredExtractor:
             logger.error(f"Image preprocessing failed: {e}")
             return image_bytes
     
+    def is_real_docx(self, file_content: bytes) -> bool:
+        """
+        Validates whether file is a real DOCX (contains `word/document.xml`)
+        """
+        import zipfile
+        from io import BytesIO
+
+        try:
+            with zipfile.ZipFile(BytesIO(file_content)) as z:
+                return "word/document.xml" in z.namelist()
+        except:
+            return False
+
+    
     async def extract_with_unstructured(
         self, 
         file_content: bytes, 
@@ -144,6 +158,11 @@ class UnstructuredExtractor:
             Structured data with headings, paragraphs, tables, images
         """
         file_ext = self._get_file_extension(filename)
+
+        if file_ext == ".docx":
+            if not self.is_real_docx(file_content):
+                logger.error(f"{filename} is not a real DOCX file. Falling back to legacy/OCR.")
+                raise RuntimeError("Invalid DOCX structure")
         
         if file_ext not in self.SUPPORTED_FORMATS:
             raise ValueError(f"Unsupported file format: {file_ext}")
