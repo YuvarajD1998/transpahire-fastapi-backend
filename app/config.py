@@ -55,9 +55,14 @@ class Settings(BaseSettings):
     
     # Gemini-specific settings
     GEMINI_TEMPERATURE: float = 0.1      # Low temperature for consistent parsing
-    GEMINI_MAX_TOKENS: int = 2500        # Sufficient for structured resume data
+    GEMINI_MAX_TOKENS: int = 8192        # Must be large enough for full resume JSON output
     GEMINI_TOP_P: float = 0.95          # High precision for structured output
     GEMINI_TOP_K: int = 40              # Balanced diversity
+
+    # Resume parsing limits
+    RESUME_TEXT_CHAR_CAP: int = 15000    # Max chars sent to LLM (was 50000)
+    SKILL_MAX_COUNT: int = 40            # Max skills to extract
+    SECTION_CHUNK_CHAR_LIMIT: int = 8000 # Max chars per section before chunking
 
     # Rate-limit, CORS, gzip
     CORS_ORIGINS: List[str] = ["*"]

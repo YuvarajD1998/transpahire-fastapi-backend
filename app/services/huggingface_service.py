@@ -3,14 +3,17 @@ import json
 import re
 from typing import Dict, Any, Optional
 from app.config import settings
-from app.models.schemas import ParsedResumeData, ParsedSkill, ParsedExperience, ParsedEducation
+from app.models.schemas import (
+    ParsedResumeData, ParsedSkill, ParsedTechnicalSkill,
+    ParsedExperience, ParsedEducation, SummaryObject,
+)
 
 
 class HuggingFaceService:
     def __init__(self) -> None:
         self.api_key = settings.HUGGINGFACE_API_KEY
         self.model_id = settings.HUGGINGFACE_MODEL_ID or "mistralai/Mistral-7B-Instruct-v0.1"
-        self.base_url = "https://api-inference.huggingface.co"
+        self.base_url = "https://router.huggingface.co"
         self.timeout = 120.0  # Increased timeout
         print(f"HuggingFaceService initialized with model {self.model_id}")
 
@@ -125,15 +128,15 @@ JSON Output:"""
             obj = json.loads(json_str)
             
             # Validate and convert skills
-            skills = []
+            technical_skills = []
             for skill_data in obj.get("skills", []):
                 if isinstance(skill_data, dict) and "name" in skill_data:
-                    skills.append(ParsedSkill(**{
-                        "name": skill_data.get("name", ""),
-                        "category": skill_data.get("category"),
-                        "level": skill_data.get("level", "Intermediate"),
-                        "years_experience": skill_data.get("years_experience")
-                    }))
+                    technical_skills.append(ParsedTechnicalSkill(
+                        name=skill_data.get("name", ""),
+                        group=skill_data.get("category"),
+                        explicit_years_experience=skill_data.get("years_experience"),
+                    ))
+            skills = ParsedSkill(technical_skills=technical_skills)
             
             # Validate and convert experience
             experience = []
@@ -147,18 +150,17 @@ JSON Output:"""
                 if isinstance(edu_data, dict) and "institution" in edu_data:
                     education.append(ParsedEducation(**edu_data))
             
+            raw_summary = obj.get("summary")
+            summary = SummaryObject(raw=raw_summary) if raw_summary else None
+
             return ParsedResumeData(
                 personal_info=obj.get("personal_info", {}),
                 skills=skills,
                 experience=experience,
                 education=education,
-                summary=obj.get("summary"),
-                confidence_score=0.8  # HF-specific confidence
+                summary=summary,
+                confidence_score=0.8,
             )
-            
+
         except Exception as e:
-            print(f"JSON parsing failed: {e}")
-            # Return safe fallback
-            return ParsedResumeData(
-                personal_info={}, skills=[], experience=[], education=[], summary=None, confidence_score=0.1
-            )
+            raise RuntimeError(f"HuggingFace response parsing failed: {e}")

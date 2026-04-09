@@ -55,6 +55,7 @@ class ParsedTechnicalSkill(EnrichedSkill):
     """
     proficiency_level: Optional[ProficiencyLevel] = None
     years_experience: Optional[float] = None
+    context: Optional[str] = None          # single short phrase (max 10 words)
 
 
 class ParsedSoftSkill(BaseModel):
@@ -67,6 +68,7 @@ class ParsedSoftSkill(BaseModel):
     raw: Optional[str] = None
     source_sections: List[str] = Field(default_factory=list)
     context_snippets: List[str] = Field(default_factory=list)
+    context: Optional[str] = None          # single short phrase (max 10 words)
     proficiency_level: Optional[ProficiencyLevel] = ProficiencyLevel.INTERMEDIATE
 
 
@@ -92,7 +94,7 @@ class ParsedExperience(BaseModel):
     is_current: bool = False
     description: Optional[str] = None
     achievements: List[str] = Field(default_factory=list)
-    skills_used: List[EnrichedSkill] = Field(default_factory=list)
+    skills_used: List[str] = []   # string names only — feeds NestJS taxonomy join
 
 
 
@@ -132,6 +134,18 @@ class ParsedLanguage(BaseModel):
     proficiency: Optional[str] = None  # Basic / Intermediate / Fluent / Native
 
 
+class SummaryObject(BaseModel):
+    raw: Optional[str] = None
+    years_experience: Optional[float] = None   # only if explicitly stated in resume
+    domains: List[str] = []                    # e.g. ["E-commerce", "Healthcare IT"]
+
+
+class CareerGap(BaseModel):
+    start_date: str          # YYYY-MM-DD
+    end_date: str            # YYYY-MM-DD
+    duration_months: int     # calculated
+
+
 class ParsedResumeData(BaseModel):
     personal_info: Dict[str, Any] = Field(default_factory=dict)
     skills: ParsedSkill = Field(default_factory=ParsedSkill)
@@ -143,8 +157,12 @@ class ParsedResumeData(BaseModel):
     projects: List[ParsedProject] = Field(default_factory=list)
     languages: List[ParsedLanguage] = Field(default_factory=list)
 
-    summary: Optional[str] = None
+    summary: Optional[SummaryObject] = None
     confidence_score: Optional[float] = Field(default=0.5, ge=0.0, le=1.0)
+
+    resume_language: str = "en"
+    career_gaps: List[CareerGap] = Field(default_factory=list)
+    total_experience_months: Optional[int] = None
 
 
 class ParseRequest(BaseModel):

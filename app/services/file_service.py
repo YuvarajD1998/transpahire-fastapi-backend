@@ -40,7 +40,10 @@ except ImportError:
 from app.config import settings
 from app.services.huggingface_service import HuggingFaceService
 from app.services.openai_service import OpenAIService
-from app.models.schemas import ParsedResumeData, ParsedSkill, ParsedExperience, ParsedEducation
+from app.models.schemas import (
+    ParsedResumeData, ParsedSkill, ParsedTechnicalSkill,
+    ParsedExperience, ParsedEducation, SummaryObject,
+)
 from app.services.gemini_service import GeminiService
 
 # Enhanced regular expressions for contact info extraction
@@ -393,6 +396,100 @@ class UnstructuredExtractor:
         return ''
 
 
+class SectionSplitter:
+    SECTION_PATTERNS = {
+        "experience": r"(work\s+experience|experience|employment|work\s+history|professional\s+experience|career\s+history)",
+        "education": r"(education|academic|qualifications|academic\s+background)",
+        "skills": r"(skills|technical\s+skills|core\s+competencies|expertise|key\s+skills)",
+        "projects": r"(projects|key\s+projects|personal\s+projects|notable\s+projects)",
+        "certifications": r"(certifications|certificates|licenses|credentials)",
+        "summary": r"(summary|profile|objective|about\s+me|professional\s+summary|career\s+objective)",
+    }
+
+    def split(self, text: str) -> dict:
+        sections = {k: "" for k in self.SECTION_PATTERNS}
+        sections["other"] = ""
+
+        lines = text.split("\n")
+        current_section = "other"
+
+        for line in lines:
+            stripped = line.strip()
+            matched = False
+            for section_name, pattern in self.SECTION_PATTERNS.items():
+                if re.fullmatch(pattern, stripped, re.IGNORECASE):
+                    current_section = section_name
+                    matched = True
+                    break
+            if not matched:
+                sections[current_section] += line + "\n"
+
+        # If fewer than 2 sections found with content, return full text as single block
+        filled = [k for k, v in sections.items() if v.strip()]
+        if len(filled) < 2:
+            return {"full": text}
+
+        return {k: v for k, v in sections.items() if v.strip()}
+
+    @staticmethod
+    def needs_chunking(section_text: str, char_limit: int = 8000) -> bool:
+        return len(section_text) > char_limit
+
+
+class SkillCleaner:
+    VERB_PREFIXES = {
+        "managing", "handling", "responsible", "leading", "working",
+        "using", "developing", "performing", "supporting", "ensuring",
+        "coordinating", "creating", "analyzing", "maintaining", "building",
+        "implementing", "designing", "delivering", "overseeing", "driving",
+    }
+
+    GENERIC_BLOCKLIST = {
+        "testing", "management", "development", "programming", "analysis",
+        "communication", "teamwork", "leadership", "problem solving",
+        "multitasking", "fast learner", "detail oriented", "self motivated",
+        "team player", "hardworking", "organized", "proactive",
+    }
+
+    def clean(self, skills: list) -> list:
+        seen_normalized = {}
+        result = []
+
+        for skill in skills:
+            name = (skill.get("name") or "").strip()
+            if not name:
+                continue
+
+            # 1. Reject verb-starting skills
+            first_word = name.lower().split()[0] if name.split() else ""
+            if first_word in self.VERB_PREFIXES:
+                continue
+
+            # 2. Reject > 5 words
+            if len(name.split()) > 5:
+                continue
+
+            # 3. Reject generic blocklist
+            if name.lower() in self.GENERIC_BLOCKLIST:
+                continue
+
+            # 4. Deduplication by normalized form
+            norm = re.sub(r"[^a-z0-9]", "", name.lower())
+            if norm in seen_normalized:
+                # Keep whichever has a non-null context
+                existing_idx = seen_normalized[norm]
+                existing = result[existing_idx]
+                if not existing.get("context") and skill.get("context"):
+                    result[existing_idx] = skill
+                continue
+
+            seen_normalized[norm] = len(result)
+            result.append(skill)
+
+        # 5. Cap at 40
+        return result[:40]
+
+
 class ResumeParserService:
     """
     Enhanced Resume Parser Service using Unstructured library.
@@ -453,15 +550,24 @@ class ResumeParserService:
             
             if not text.strip():
                 raise ValueError("No text extracted from file")
-            
+
+            # Apply char cap before passing to any LLM
+            text = text[:settings.RESUME_TEXT_CHAR_CAP]
+
             # STEP 2: Parse extracted text with LLM services
             # Try Gemini first (best accuracy and multimodal capabilities)
             if self.gemini.is_available():
                 try:
                     logger.info("Attempting to parse with Gemini...")
-                    return await self.gemini.parse_resume_text(text)
+                    parsed_data = await self.gemini.parse_resume_text(text)
+                    # Apply skill cleaning after Gemini succeeds
+                    cleaner = SkillCleaner()
+                    if parsed_data.skills and parsed_data.skills.technical_skills:
+                        cleaned = cleaner.clean([s.model_dump() for s in parsed_data.skills.technical_skills])
+                        parsed_data.skills.technical_skills = [ParsedTechnicalSkill(**s) for s in cleaned]
+                    return parsed_data
                 except Exception as gemini_error:
-                    logger.warning(f"Gemini parsing failed: {gemini_error}, falling back to OpenAI")
+                    logger.exception(f"Gemini parsing failed: {gemini_error}")
             
             # Fallback to OpenAI
             try:
@@ -485,7 +591,7 @@ class ResumeParserService:
             # Return minimal structured data
             return ParsedResumeData(
                 personal_info={},
-                skills=[],
+                skills=ParsedSkill(technical_skills=[], soft_skills=[]),
                 experience=[],
                 education=[],
                 summary=None,
@@ -654,8 +760,9 @@ class ResumeParserService:
         skills = await self._extract_skills_enhanced(text)
         experience = self._extract_experience_enhanced(text)
         education = self._extract_education_enhanced(text)
-        summary = self._extract_summary(text)
-        
+        summary_text = self._extract_summary(text)
+        summary = SummaryObject(raw=summary_text) if summary_text else None
+
         return ParsedResumeData(
             personal_info=personal_info,
             skills=skills,
@@ -693,7 +800,7 @@ class ResumeParserService:
                         return line
         return None
     
-    async def _extract_skills_enhanced(self, text: str) -> List[ParsedSkill]:
+    async def _extract_skills_enhanced(self, text: str) -> ParsedSkill:
         """Extract skills using comprehensive database."""
         skill_categories = {
             'Programming': ['python', 'javascript', 'java', 'c++', 'c#', 'ruby', 'go', 'rust'],
@@ -702,24 +809,19 @@ class ResumeParserService:
             'Cloud': ['aws', 'azure', 'gcp', 'docker', 'kubernetes'],
             'Data Science': ['pandas', 'numpy', 'tensorflow', 'pytorch', 'machine learning'],
         }
-        
+
         found_skills = []
         text_lower = text.lower()
-        
+
         for category, skill_list in skill_categories.items():
             for skill in skill_list:
                 if skill.lower() in text_lower:
-                    level = "INTERMEDIATE"
-                    if any(pro in text_lower for pro in ['expert', 'advanced', 'senior']):
-                        level = "EXPERT"
-                    
-                    found_skills.append(ParsedSkill(
+                    found_skills.append(ParsedTechnicalSkill(
                         name=skill.title(),
-                        category=category,
-                        proficiency_level=level
+                        group=category,
                     ))
-        
-        return found_skills
+
+        return ParsedSkill(technical_skills=found_skills, soft_skills=[])
     
     def _extract_experience_enhanced(self, text: str) -> List[ParsedExperience]:
         """Extract experience using pattern matching."""
