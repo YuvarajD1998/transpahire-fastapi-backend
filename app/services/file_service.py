@@ -47,6 +47,10 @@ from app.models.schemas import (
 from app.services.gemini_service import GeminiService
 
 # Enhanced regular expressions for contact info extraction
+class LLMAllFailedError(Exception):
+    """Raised when all LLM providers fail and regex fallback is disabled."""
+
+
 EMAIL_RE = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
 PHONE_RE = r'(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b'
 LINKEDIN_RE = r'(https?://)?(www\.)?linkedin\.com/(in|pub)/[a-zA-Z0-9-]+'
@@ -192,21 +196,25 @@ class UnstructuredExtractor:
                 'include_page_breaks': True,
             }
             
-            # For PDFs and images, use hi_res strategy for better table extraction
-            if file_type in ['pdf', 'image'] and use_hi_res:
-                extraction_kwargs['strategy'] = 'hi_res'
-                extraction_kwargs['infer_table_structure'] = True
+            # Use 'fast' strategy to avoid loading heavyweight ML layout models (Detectron2/YOLO)
+            # which consume 4-8 GB RAM and cause system OOM crashes.
+            # 'fast' uses pdfminer for text PDFs — sufficient for resumes.
+            if file_type in ['pdf', 'image']:
+                extraction_kwargs['strategy'] = 'fast'
             
-            # Use specific partition function based on file type
+            # Run blocking partition calls in a thread pool to avoid blocking the event loop
+            import asyncio
+            import functools
+            loop = asyncio.get_running_loop()
+
             if file_type == 'pdf':
-                elements = partition_pdf(**extraction_kwargs)
+                elements = await loop.run_in_executor(None, functools.partial(partition_pdf, **extraction_kwargs))
             elif file_type == 'word':
-                elements = partition_docx(**extraction_kwargs)
+                elements = await loop.run_in_executor(None, functools.partial(partition_docx, **extraction_kwargs))
             elif file_type == 'image':
-                elements = partition_image(**extraction_kwargs)
+                elements = await loop.run_in_executor(None, functools.partial(partition_image, **extraction_kwargs))
             else:
-                # Fallback to auto partition
-                elements = partition(**extraction_kwargs)
+                elements = await loop.run_in_executor(None, functools.partial(partition, **extraction_kwargs))
             
             logger.info(f"Extracted {len(elements)} elements from {filename}")
             
@@ -528,10 +536,10 @@ class ResumeParserService:
             try:
                 # Try unstructured extraction first
                 structured_data = await self.unstructured.extract_with_unstructured(
-                    file_content, 
-                    filename, 
+                    file_content,
+                    filename,
                     enhance_images=enhance_images,
-                    use_hi_res=True  # Enable high-res for better tables
+                    use_hi_res=False  # hi_res loads heavy ML models (4-8 GB RAM) and crashes low-memory machines
                 )
                 
                 # Get the raw text for LLM processing
@@ -581,11 +589,19 @@ class ResumeParserService:
                     logger.info("Attempting to parse with HuggingFace...")
                     return await self.hf.parse_resume_text(text)
                 except Exception as hf_error:
-                    logger.warning(f"HuggingFace parsing failed: {hf_error}, falling back to enhanced regex")
-                    
-                    # Final fallback to enhanced regex parsing
-                    return await self._enhanced_fallback_parse(text)
-                    
+                    logger.warning(f"HuggingFace parsing failed: {hf_error}")
+
+                    if settings.ENABLE_REGEX_FALLBACK:
+                        logger.info("All LLMs failed — falling back to enhanced regex (ENABLE_REGEX_FALLBACK=True)")
+                        return await self._enhanced_fallback_parse(text)
+
+                    raise LLMAllFailedError(
+                        "All LLM providers failed (Gemini, OpenAI, HuggingFace). "
+                        "Enable ENABLE_REGEX_FALLBACK=True to use regex extraction as a last resort."
+                    ) from hf_error
+
+        except LLMAllFailedError:
+            raise
         except Exception as e:
             logger.error(f"All parsing strategies failed: {e}")
             # Return minimal structured data
@@ -628,10 +644,10 @@ class ResumeParserService:
         try:
             # Try unstructured extraction
             structured_data = await self.unstructured.extract_with_unstructured(
-                file_content, 
-                filename, 
+                file_content,
+                filename,
                 enhance_images=enhance_images,
-                use_hi_res=True
+                use_hi_res=False
             )
             return structured_data.get('raw_text', '')
             

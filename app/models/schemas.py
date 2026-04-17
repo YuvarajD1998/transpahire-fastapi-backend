@@ -100,7 +100,7 @@ class ParsedExperience(BaseModel):
 
 class ParsedEducation(BaseModel):
     institution: str
-    degree: str
+    degree: Optional[str] = None
     field: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
@@ -138,6 +138,14 @@ class SummaryObject(BaseModel):
     raw: Optional[str] = None
     years_experience: Optional[float] = None   # only if explicitly stated in resume
     domains: List[str] = []                    # e.g. ["E-commerce", "Healthcare IT"]
+
+    @field_validator("years_experience", mode="before")
+    @classmethod
+    def _coerce_years(cls, v):
+        if isinstance(v, str):
+            v = re.sub(r"[^\d.]", "", v)  # strip "+", spaces, etc.
+            return float(v) if v else None
+        return v
 
 
 class CareerGap(BaseModel):

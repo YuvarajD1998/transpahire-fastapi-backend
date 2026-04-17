@@ -26,40 +26,62 @@ class GeminiService:
         self.api_key = settings.GEMINI_API_KEY
         self.model = settings.GEMINI_MODEL
         self.client = genai.Client(api_key=self.api_key) if self.api_key else None
+        # Model cascade loaded from env; first success wins
+        self.parse_models = [
+            settings.GEMINI_PARSE_MODEL_1,
+            settings.GEMINI_PARSE_MODEL_2,
+            settings.GEMINI_PARSE_MODEL_3,
+        ]
 
     def is_available(self) -> bool:
         """Check if Gemini service is available."""
         return self.client is not None
 
     async def parse_resume_text(self, text: str) -> ParsedResumeData:
-        """Parse resume text using Google Gemini."""
+        """Parse resume text using Google Gemini, cycling through models on failure."""
         if not self.client:
             raise RuntimeError("Gemini API key not configured")
 
         prompt = self._build_extraction_prompt(text)
+        last_error: Exception = RuntimeError("No models attempted")
 
-        try:
-            response = await self._generate_content_async(prompt)
-            print(f"[Gemini raw output]\n{response.text}\n[/Gemini raw output]")
-            parsed = self._parse_gemini_response(response.text)
-            return self._normalize_parsed_data(parsed)
-        except Exception as e:
-            raise RuntimeError(f"Gemini API error: {str(e)}")
+        for attempt, model in enumerate(self.parse_models, start=1):
+            try:
+                print(f"[Gemini] Attempt {attempt}/{len(self.parse_models)} using model: {model}")
+                response = await self._generate_content_async(prompt, model=model)
+                print(f"[Gemini raw output]\n{response.text}\n[/Gemini raw output]")
+                parsed = self._parse_gemini_response(response.text)
+                return self._normalize_parsed_data(parsed)
+            except Exception as e:
+                print(f"[Gemini] Attempt {attempt} failed ({model}): {e}")
+                last_error = e
 
-    async def _generate_content_async(self, prompt: str):
+        raise RuntimeError(f"All Gemini models failed. Last error: {last_error}")
+
+    async def _generate_content_async(self, prompt: str, model: Optional[str] = None):
         """Generate content using Gemini with async support."""
+        resolved_model = model or self.model
         loop = asyncio.get_running_loop()
         response = await loop.run_in_executor(
             None,
             lambda: self.client.models.generate_content(
-                model=self.model,
+                model=resolved_model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=settings.GEMINI_TEMPERATURE,
                     max_output_tokens=settings.GEMINI_MAX_TOKENS,
+                    response_mime_type="application/json",
                 ),
             ),
         )
+        # Check if the response was truncated due to token limit
+        if response.candidates:
+            finish_reason = response.candidates[0].finish_reason
+            if finish_reason and str(finish_reason) not in ("FinishReason.STOP", "STOP", "1"):
+                raise RuntimeError(
+                    f"Gemini response truncated (finish_reason={finish_reason}). "
+                    "Increase GEMINI_MAX_TOKENS or reduce input size."
+                )
         return response
 
     
@@ -319,18 +341,7 @@ class GeminiService:
             )
 
         except Exception as e:
-            print(f"Parsing error: {e}")
-            return ParsedResumeData(
-                personal_info={},
-                skills=ParsedSkill(technical_skills=[], soft_skills=[]),
-                experience=[],
-                education=[],
-                certifications=[],
-                projects=[],
-                languages=[],
-                summary=None,
-                confidence_score=0.1,
-            )
+            raise ValueError(f"Failed to parse Gemini response: {e}")
 
     def _normalize_parsed_data(self, parsed: ParsedResumeData) -> ParsedResumeData:
         """Post-process LLM output to enforce contract rules."""

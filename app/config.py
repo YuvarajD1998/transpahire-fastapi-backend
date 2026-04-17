@@ -15,8 +15,13 @@ class Settings(BaseSettings):
     jwt_refresh_secret: str 
 
     # Google Gemini (Primary AI Parser)
-    GEMINI_API_KEY: Optional[str] = None  
-    GEMINI_MODEL: str = "gemini-1.5-flash"  
+    GEMINI_API_KEY: Optional[str] = None
+    GEMINI_MODEL: str = "gemini-1.5-flash"
+
+    # Gemini parse model cascade (attempt 1 → 2 → 3 before falling back to OpenAI)
+    GEMINI_PARSE_MODEL_1: str = "gemini-2.5-flash"
+    GEMINI_PARSE_MODEL_2: str = "gemini-2.0-flash-preview"
+    GEMINI_PARSE_MODEL_3: str = "gemini-2.5-flash-lite"
     
     # OpenAI (First Fallback)
     OPENAI_API_KEY: Optional[str] = None
@@ -52,10 +57,11 @@ class Settings(BaseSettings):
     AI_PROCESSING_TIMEOUT: int = 120  # seconds
     AI_MAX_RETRIES: int = 3
     AI_ENABLE_FALLBACK: bool = True
+    ENABLE_REGEX_FALLBACK: bool = False  # When False, raise error if all LLMs fail instead of using regex
     
     # Gemini-specific settings
     GEMINI_TEMPERATURE: float = 0.1      # Low temperature for consistent parsing
-    GEMINI_MAX_TOKENS: int = 8192        # Must be large enough for full resume JSON output
+    GEMINI_MAX_TOKENS: int = 65536       # Must be large enough for full resume JSON output
     GEMINI_TOP_P: float = 0.95          # High precision for structured output
     GEMINI_TOP_K: int = 40              # Balanced diversity
 
