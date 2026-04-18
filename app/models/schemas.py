@@ -494,3 +494,83 @@ class SetPrimaryResumeResponse(BaseModel):
     resume_id: int
     embeddings_regenerated: bool
     data_updated: bool
+
+
+# =====================================================================
+#  JD PARSING MODELS
+# =====================================================================
+
+class ParsedJdRole(BaseModel):
+    raw_title: str
+    normalized: str
+    confidence: float = 0.9
+
+
+class ParsedJdSkill(BaseModel):
+    name: str
+    importance: str = "REQUIRED"  # CRITICAL | REQUIRED | PREFERRED | BONUS
+    skill_type: str = "TECHNICAL"
+    # Full enum: "TECHNICAL" | "SOFT" | "DOMAIN" | "TOOL" | "CERTIFICATION" | "LANGUAGE"
+    # TECHNICAL  — engineering concepts, patterns, methodologies (e.g. microservices, TDD, REST)
+    # SOFT       — interpersonal traits (e.g. ownership, mentoring, stakeholder communication)
+    # DOMAIN     — industry/vertical knowledge (e.g. fintech, healthcare, e-commerce)
+    # TOOL       — named tools, platforms, IDEs, SaaS products (e.g. Jira, Figma, Datadog)
+    # CERTIFICATION — named certifications (e.g. AWS Certified Solutions Architect, PMP)
+    # LANGUAGE   — programming/query/markup languages ONLY (e.g. Python, SQL, TypeScript, GraphQL)
+    #              Do NOT use LANGUAGE for spoken languages — those go in jdLanguage field.
+    years_required: Optional[int] = None
+    context: Optional[str] = None
+
+
+class JDSalaryRange(BaseModel):
+    min: Optional[int] = None
+    max: Optional[int] = None
+    currency: Optional[str] = None   # ISO 4217 — "INR", "USD", etc.
+    period: Optional[str] = None     # "ANNUAL" | "MONTHLY" | "HOURLY"
+    equity_mentioned: bool = False
+
+
+class JDLocation(BaseModel):
+    city: Optional[str] = None
+    country: Optional[str] = None
+    remote: bool = False
+    hybrid: bool = False
+
+
+class JDEducation(BaseModel):
+    degree_required: Optional[str] = None  # "BACHELOR" | "MASTER" | "PHD" | "ANY"
+    field: Optional[str] = None
+    required: Optional[bool] = None        # True = required, False = preferred, None = not stated
+    explicitly_not_required: bool = False
+
+
+class JDEmploymentType(BaseModel):
+    value: str              # "FULL_TIME" | "PART_TIME" | "CONTRACT" | "INTERNSHIP" | "FREELANCE"
+    inferred: bool = False  # True when not explicitly stated, defaulted to FULL_TIME
+
+
+class ParsedJdData(BaseModel):
+    role: Optional[ParsedJdRole] = None
+    skills: List[ParsedJdSkill] = Field(default_factory=list)
+    location: Optional[str] = None                          # flat string kept for backward compat
+    location_structured: Optional[JDLocation] = None       # structured form; prefer this for v2
+    experience_range: Optional[Dict[str, Any]] = None      # {"min": int, "max": int}
+    department: Optional[str] = None
+    employment_type: Optional[JDEmploymentType] = None
+    seniority_level: Optional[str] = None                  # "INTERN"|"JUNIOR"|"MID"|"SENIOR"|"STAFF"|"PRINCIPAL"|"DIRECTOR"|"VP"|"C_LEVEL"
+    salary_range: Optional[JDSalaryRange] = None
+    education: Optional[JDEducation] = None
+    key_responsibilities: List[str] = Field(default_factory=list)
+    key_requirements: List[str] = Field(default_factory=list)
+    language: Optional[str] = None                         # ISO 639-1 e.g. "en", "hi"
+    schema_version: str = "2.0"
+    input_truncated: bool = False
+    confidence_score: float = 0.9
+
+
+class JdParseResponse(BaseModel):
+    success: bool
+    jd_id: Optional[int] = None
+    parsed_data: Optional[ParsedJdData] = None
+    error: Optional[str] = None
+    confidence_score: float = 0.0

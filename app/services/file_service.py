@@ -905,28 +905,28 @@ class ResumeParserService:
 # Optional: Keep FileService if needed for other purposes
 class FileService:
     """Service for handling file operations."""
-    
+
     def __init__(self, upload_dir: str = "uploads"):
         import uuid
         import aiofiles
         self.upload_dir = Path(upload_dir)
         self.upload_dir.mkdir(parents=True, exist_ok=True)
-    
+
     async def save_file(self, content: bytes, filename: str, content_type: str) -> str:
         """Save uploaded file to disk."""
         import uuid
         import aiofiles
-        
+
         file_id = str(uuid.uuid4())
         file_extension = self._get_file_extension(filename)
         new_filename = f"{file_id}{file_extension}"
         file_path = self.upload_dir / new_filename
-        
+
         async with aiofiles.open(file_path, 'wb') as f:
             await f.write(content)
-        
+
         return str(file_path)
-    
+
     async def delete_file(self, file_path: str) -> bool:
         """Delete file from disk."""
         try:
@@ -936,15 +936,66 @@ class FileService:
             return False
         except OSError:
             return False
-    
+
     async def read_file(self, file_path: str) -> bytes:
         """Read file content."""
         import aiofiles
         async with aiofiles.open(file_path, 'rb') as f:
             return await f.read()
-    
+
     def _get_file_extension(self, filename: str) -> str:
         """Extract file extension."""
         if '.' in filename:
             return '.' + filename.split('.')[-1].lower()
         return ''
+
+
+class JdParserService:
+    """Extracts text from JD files and delegates parsing to JdGeminiService."""
+
+    def __init__(self) -> None:
+        from app.services.jd_gemini_service import JdGeminiService
+        self.gemini = JdGeminiService()
+        self.unstructured = UnstructuredExtractor()
+
+    async def extract_text_from_jd(self, file_content: bytes, filename: str) -> str:
+        ext = self._get_file_extension(filename)
+        try:
+            structured = await self.unstructured.extract_with_unstructured(
+                file_content, filename, enhance_images=False, use_hi_res=False
+            )
+            text = structured.get("raw_text", "")
+            if text.strip():
+                return text
+        except Exception:
+            pass
+
+        if ext in (".docx", ".doc"):
+            return self._extract_docx(file_content)
+        if ext == ".pdf":
+            return self._extract_pdf(file_content)
+        return file_content.decode(errors="ignore")
+
+    def _extract_docx(self, data: bytes) -> str:
+        import docx
+        buf = io.BytesIO(data)
+        doc = docx.Document(buf)
+        return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+
+    def _extract_pdf(self, data: bytes) -> str:
+        import PyPDF2
+        buf = io.BytesIO(data)
+        reader = PyPDF2.PdfReader(buf)
+        parts = [page.extract_text() for page in reader.pages if page.extract_text()]
+        return "\n".join(parts)
+
+    async def parse_jd(self, file_content: bytes, filename: str):
+        text = await self.extract_text_from_jd(file_content, filename)
+        if not text.strip():
+            raise ValueError("No text extracted from JD file")
+        return await self.gemini.parse_jd_text(text)
+
+    def _get_file_extension(self, filename: str) -> str:
+        if "." in filename:
+            return "." + filename.split(".")[-1].lower()
+        return ""
