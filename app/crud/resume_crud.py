@@ -35,9 +35,7 @@ class WorkExperienceCRUD:
         description: Optional[str] = None,
         achievements: Optional[List[str]] = None,
         skills: Optional[List[str]] = None,
-        resume_id: Optional[int] = None 
-        
-        
+        resume_id: Optional[int] = None
     ) -> WorkExperience:
         # Parse date strings to datetime objects
         start_dt = None
@@ -66,7 +64,6 @@ class WorkExperienceCRUD:
             description=description,
             achievements=achievements or [],
             skills=skills or [],
-            resume_id=resume_id 
         )
         
         db.add(work_exp)
@@ -131,8 +128,7 @@ class EducationCRUD:
             end_date=end_dt,
             grade=grade,
             description=description,
-            resume_id=resume_id,  # FIXED: Include this field
-            source=source         # FIXED: Include this field
+            source=source
         )
         
         db.add(education)

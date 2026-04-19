@@ -3,23 +3,20 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.database import db_manager
+from app.limiter import limiter
 from app.middleware.errorhandler import ErrorHandlerMiddleware, setup_exception_handlers
-from app.routers import health, resumes, embeddings, embeddings_local, jd
+from app.routers import health, resumes, embeddings, embeddings_local, jd, skills, match as match_router
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
-
-# Rate limiting
-limiter = Limiter(key_func=get_remote_address)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -65,6 +62,8 @@ def create_app() -> FastAPI:
     app.include_router(embeddings.router, prefix=settings.API_V1_PREFIX)
     app.include_router(embeddings_local.router, prefix=settings.API_V1_PREFIX)
     app.include_router(jd.router, prefix=settings.API_V1_PREFIX)
+    app.include_router(skills.router, prefix=settings.API_V1_PREFIX)
+    app.include_router(match_router.router, prefix=settings.API_V1_PREFIX)
 
     return app
 

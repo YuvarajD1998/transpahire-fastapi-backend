@@ -5,7 +5,7 @@ from sqlalchemy import select, delete, and_
 from datetime import datetime
 
 from app.models.embedding_models import CandidateEmbedding, JobEmbedding
-from app.models.database_models import Profile
+from app.models.database_models import Profile, Job, JobRequiredSkill
 from app.services.gemini_service_embedding import GeminiService
 from app.services.representation_service import ResumeRepresentationService, JobRepresentationService
 from app.crud.resume_crud import ProfileCRUD, WorkExperienceCRUD, EducationCRUD, ProfileSkillCRUD
@@ -169,7 +169,7 @@ class MultiVectorEmbeddingService:
         self,
         db: AsyncSession,
         job_id: int,
-        job_data: Dict,
+        job_data: Optional[Dict] = None,
         regenerate: bool = False
     ) -> Dict[str, bool]:
         """
@@ -179,7 +179,7 @@ class MultiVectorEmbeddingService:
             Dict with success status for each embedding type
         """
         logger.info(f"Generating multi-vector embeddings for job {job_id}")
-        
+
         try:
             # Check if embeddings already exist
             if not regenerate:
@@ -190,7 +190,14 @@ class MultiVectorEmbeddingService:
             else:
                 # Delete existing embeddings
                 await self._delete_job_embeddings(db, job_id)
-            
+
+            # Fetch job data from DB if not provided (or empty)
+            if not job_data:
+                job_data = await self._get_complete_job_data(db, job_id)
+            if not job_data:
+                logger.warning(f"No job data found for job {job_id}")
+                return {etype: False for etype in self.JOB_EMBEDDING_TYPES}
+
             results = {}
             
             # Generate each embedding type
@@ -335,15 +342,15 @@ class MultiVectorEmbeddingService:
     # =========================================
     
     async def _get_complete_profile_data(self, db: AsyncSession, candidate_id: int) -> Optional[Dict]:
-        """Get all related data for a profile."""
+        """Get all related data for a profile. candidate_id is user_id from NestJS."""
         try:
-            profile = await ProfileCRUD.get_by_id(db, candidate_id)
+            profile = await ProfileCRUD.get_by_user_id(db, candidate_id)
             if not profile:
                 return None
-            
-            work_experiences = await WorkExperienceCRUD.get_by_profile_id(db, candidate_id)
-            educations = await EducationCRUD.get_by_profile_id(db, candidate_id)
-            skills = await ProfileSkillCRUD.get_by_profile_id(db, candidate_id)
+
+            work_experiences = await WorkExperienceCRUD.get_by_profile_id(db, profile.id)
+            educations = await EducationCRUD.get_by_profile_id(db, profile.id)
+            skills = await ProfileSkillCRUD.get_by_profile_id(db, profile.id)
             
             return {
                 "profile": profile,
@@ -356,6 +363,52 @@ class MultiVectorEmbeddingService:
             logger.error(f"Error getting profile data: {e}")
             return None
     
+    async def _get_complete_job_data(self, db: AsyncSession, job_id: int) -> Optional[Dict]:
+        """Fetch job + required skills from DB and build the job_data dict."""
+        try:
+            result = await db.execute(select(Job).where(Job.id == job_id))
+            job = result.scalar_one_or_none()
+            if not job:
+                return None
+
+            skills_result = await db.execute(
+                select(JobRequiredSkill).where(JobRequiredSkill.job_id == job_id)
+            )
+            job_skills = skills_result.scalars().all()
+
+            # Resolve skill names via taxonomy (select only needed columns)
+            from app.models.database_models import SkillTaxonomy
+            skills = []
+            for js in job_skills:
+                tax_result = await db.execute(
+                    select(SkillTaxonomy.id, SkillTaxonomy.skill_name)
+                    .where(SkillTaxonomy.id == js.skill_taxonomy_id)
+                )
+                row = tax_result.first()
+                if row:
+                    skills.append({
+                        "name": row.skill_name,
+                        "importance": js.importance,
+                        "skill_type": js.skill_type,
+                    })
+
+            return {
+                "title": job.title,
+                "description": job.description,
+                "location": job.location_city or job.location or "",
+                "remote": job.is_remote or job.remote,
+                "key_responsibilities": job.key_responsibilities or [],
+                "key_requirements": job.key_requirements or [],
+                "skills": skills,
+                "requirements": {
+                    "min_experience": job.min_experience,
+                    "max_experience": job.max_experience,
+                },
+            }
+        except Exception as e:
+            logger.error(f"Error fetching job data for job {job_id}: {e}")
+            return None
+
     async def _get_candidate_embeddings(
         self, 
         db: AsyncSession, 

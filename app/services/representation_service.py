@@ -265,73 +265,76 @@ class JobRepresentationService:
     
     @staticmethod
     def generate_required_skills_text(job_data: Dict) -> str:
-        """
-        Generate skill requirements text.
-        
-        Example:
-        "Required: React, Redux, TypeScript. Preferred: NodeJS. Critical: React"
-        """
-        requirements = job_data.get('requirements', {})
-        
-        if not isinstance(requirements, dict):
-            return ""
-        
+        """Generate skill requirements text from JD parsed output."""
         parts = []
-        
-        # Required skills
-        required = requirements.get('required_skills', [])
-        if required:
-            parts.append(f"Required: {', '.join(required)}")
-        
-        # Preferred skills
-        preferred = requirements.get('preferred_skills', [])
-        if preferred:
-            parts.append(f"Preferred: {', '.join(preferred)}")
-        
-        # Critical skills
-        critical = requirements.get('critical_skills', [])
-        if critical:
-            parts.append(f"Critical: {', '.join(critical)}")
-        
+
+        # JD parser format: top-level skills array with importance field
+        skills_list = job_data.get('skills', [])
+        if skills_list and isinstance(skills_list, list) and isinstance(skills_list[0], dict):
+            required = [s['name'] for s in skills_list if s.get('importance') == 'REQUIRED']
+            preferred = [s['name'] for s in skills_list if s.get('importance') == 'PREFERRED']
+            bonus = [s['name'] for s in skills_list if s.get('importance') == 'BONUS']
+            if required:
+                parts.append(f"Required: {', '.join(required)}")
+            if preferred:
+                parts.append(f"Preferred: {', '.join(preferred)}")
+            if bonus:
+                parts.append(f"Nice to have: {', '.join(bonus)}")
+        else:
+            # Fallback: flat lists inside requirements dict
+            requirements = job_data.get('requirements', {})
+            if isinstance(requirements, dict):
+                req = requirements.get('required_skills', [])
+                pref = requirements.get('preferred_skills', [])
+                crit = requirements.get('critical_skills', [])
+                if req:
+                    parts.append(f"Required: {', '.join(req)}")
+                if pref:
+                    parts.append(f"Preferred: {', '.join(pref)}")
+                if crit:
+                    parts.append(f"Critical: {', '.join(crit)}")
+
+        # Also include key_requirements if present
+        key_reqs = job_data.get('key_requirements', [])
+        if key_reqs:
+            parts.append(". ".join(key_reqs))
+
         return ". ".join(parts)
-    
+
     @staticmethod
     def generate_responsibilities_text(job_data: Dict) -> str:
-        """
-        Generate responsibilities text.
-        
-        Example:
-        "Build UI dashboards, forms, reusable components. 
-         Work with APIs, Redux state management. Collaborate with backend teams."
-        """
-        description = job_data.get('description', '')
-        requirements = job_data.get('requirements', {})
-        
+        """Generate responsibilities text from JD parsed output."""
         parts = []
-        
-        # Main description (truncated)
+
+        description = job_data.get('description', '')
         if description:
-            desc_clean = description[:500] + "..." if len(description) > 500 else description
-            parts.append(desc_clean)
-        
-        # Responsibilities from requirements
-        if isinstance(requirements, dict):
-            responsibilities = requirements.get('responsibilities', [])
-            if responsibilities:
-                parts.append(". ".join(responsibilities[:5]))
-        
+            parts.append(description[:500] + "..." if len(description) > 500 else description)
+
+        # JD parser format: key_responsibilities at top level
+        key_resp = job_data.get('key_responsibilities', [])
+        if key_resp:
+            parts.append(". ".join(key_resp[:5]))
+        else:
+            # Fallback: nested in requirements
+            requirements = job_data.get('requirements', {})
+            if isinstance(requirements, dict):
+                responsibilities = requirements.get('responsibilities', [])
+                if responsibilities:
+                    parts.append(". ".join(responsibilities[:5]))
+
         return " ".join(parts)
     
     @staticmethod
     def _extract_required_skills(job_data: Dict) -> List[str]:
-        """Extract all required skills from job data."""
+        """Extract required skills from job data (JD parser or flat format)."""
+        skills_list = job_data.get('skills', [])
+        if skills_list and isinstance(skills_list, list) and isinstance(skills_list[0], dict):
+            return list({s['name'] for s in skills_list if s.get('importance') in ('REQUIRED', 'CRITICAL')})
+
         requirements = job_data.get('requirements', {})
-        
         if not isinstance(requirements, dict):
             return []
-        
-        skills = []
-        skills.extend(requirements.get('required_skills', []))
-        skills.extend(requirements.get('critical_skills', []))
-        
-        return list(set(skills))  # Remove duplicates
+        result = []
+        result.extend(requirements.get('required_skills', []))
+        result.extend(requirements.get('critical_skills', []))
+        return list(set(result))

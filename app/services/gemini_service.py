@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 import asyncio
 from typing import Optional
@@ -6,6 +7,8 @@ import google.genai as genai
 from google.genai import types
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 from app.models.schemas import (
     ParsedResumeData,
     ParsedSkill,
@@ -36,6 +39,36 @@ class GeminiService:
     def is_available(self) -> bool:
         """Check if Gemini service is available."""
         return self.client is not None
+
+    async def generate_text(self, prompt: str, max_tokens: int = 2000) -> str:
+        """Generic text generation using model cascade. Returns raw text response."""
+        if not self.client:
+            raise RuntimeError("Gemini API key not configured")
+
+        last_error: Exception = RuntimeError("No models attempted")
+        for attempt, model_name in enumerate(self.parse_models, start=1):
+            try:
+                logger.info(f"[Gemini generate_text] Attempt {attempt}/{len(self.parse_models)} using {model_name}")
+                loop = asyncio.get_running_loop()
+                response = await loop.run_in_executor(
+                    None,
+                    lambda m=model_name: self.client.models.generate_content(
+                        model=m,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            temperature=settings.GEMINI_TEMPERATURE,
+                            max_output_tokens=max_tokens,
+                        ),
+                    ),
+                )
+                if response.text and response.text.strip():
+                    return response.text
+                logger.warning(f"[Gemini generate_text] Model {model_name} returned empty/whitespace response, trying next...")
+            except Exception as e:
+                logger.warning(f"[Gemini generate_text] Model {model_name} failed: {e}, trying next...")
+                last_error = e
+
+        raise RuntimeError(f"All Gemini models failed for text generation. Last error: {last_error}")
 
     async def parse_resume_text(self, text: str) -> ParsedResumeData:
         """Parse resume text using Google Gemini, cycling through models on failure."""
@@ -183,7 +216,7 @@ class GeminiService:
 
           --- RULES: SKILLS ---
 
-          1. Max 40 skills total in technical_skills.
+          1. Max 50 skills total in technical_skills.
           2. INCLUDE: programming languages, frameworks, libraries, cloud platforms, databases, DevOps tools, design tools, domain skills, trade skills (e.g. CNC Operation, Welding, Circuit Assembly).
           3. EXCLUDE: generic verbs (managing, handling, responsible for, leading, coordinating), vague traits (hardworking, team player, fast learner, detail oriented, self motivated), overly broad single words (Testing, Management, Development, Analysis) unless qualified (e.g. Regression Testing is fine).
           4. CANONICAL naming - use these exact forms: React (not React.js or ReactJS), Node.js (not NodeJS), AWS (not Amazon Web Services), PostgreSQL (not Postgres), JavaScript (not JS), TypeScript (not TS). Always use the widely accepted industry short form.

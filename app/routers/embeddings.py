@@ -1,9 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict
 
 from app.database import get_db
-from app.dependencies import get_current_user
 from app.services.multi_vector_embedding_service import MultiVectorEmbeddingService
 
 router = APIRouter(prefix="/embeddings", tags=["embeddings"])
@@ -15,7 +14,6 @@ async def generate_candidate_embeddings(
     background_tasks: BackgroundTasks,
     regenerate: bool = False,
     db: AsyncSession = Depends(get_db),
-    user = Depends(get_current_user)
 ):
     """
     Generate multi-vector embeddings for a candidate.
@@ -40,7 +38,6 @@ async def generate_candidate_embeddings(
 async def get_candidate_embedding_status(
     candidate_id: int,
     db: AsyncSession = Depends(get_db),
-    user = Depends(get_current_user)
 ):
     """Check embedding status for a candidate."""
     embedding_service = MultiVectorEmbeddingService()
@@ -60,21 +57,20 @@ async def get_candidate_embedding_status(
 @router.post("/jobs/{job_id}/generate")
 async def generate_job_embeddings(
     job_id: int,
-    job_data: Dict,
     background_tasks: BackgroundTasks,
     regenerate: bool = False,
     db: AsyncSession = Depends(get_db),
-    user = Depends(get_current_user)
 ):
     """
     Generate multi-vector embeddings for a job.
     Creates 3 embeddings: jd_summary, required_skills, responsibilities
+    Job data is fetched from DB automatically.
     """
     embedding_service = MultiVectorEmbeddingService()
-    
+
     background_tasks.add_task(
         embedding_service.generate_job_embeddings,
-        db, job_id, job_data, regenerate
+        db, job_id, None, regenerate
     )
     
     return {
@@ -88,7 +84,6 @@ async def generate_job_embeddings(
 async def get_job_embedding_status(
     job_id: int,
     db: AsyncSession = Depends(get_db),
-    user = Depends(get_current_user)
 ):
     """Check embedding status for a job."""
     embedding_service = MultiVectorEmbeddingService()

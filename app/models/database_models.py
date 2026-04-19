@@ -229,12 +229,10 @@ class WorkExperience(Base):
     skills = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, server_default=func.now(), onupdate=datetime.utcnow, nullable=False)
-    resume_id = Column(Integer, ForeignKey('resumes.id'), nullable=True)
-    source = Column(String, default='AI_EXTRACTED') # MANUAL, AI_EXTRACTED, VERIFIED
-    
+    source = Column(String, default='AI_EXTRACTED')
+
     profile = relationship("Profile", back_populates="work_experiences")
-    resume = relationship("Resume") 
-    
+
     __table_args__ = (
         Index("idx_work_experiences_profile_id", "profile_id"),
     )
@@ -254,13 +252,9 @@ class Education(Base):
     description = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, server_default=func.now(), onupdate=datetime.utcnow, nullable=False)
-    resume_id = Column(Integer, ForeignKey('resumes.id'), nullable=True) 
-    source = Column(String, default='AI_EXTRACTED') # MANUAL, AI_EXTRACTED, VERIFIED
-    
-    # Relationship
-    
+    source = Column(String, default='AI_EXTRACTED')
+
     profile = relationship("Profile", back_populates="educations")
-    resume = relationship("Resume")
     
     __table_args__ = (
         Index("idx_educations_profile_id", "profile_id"),
@@ -284,3 +278,42 @@ class Embedding(Base):
         Index("idx_embeddings_entity_type", "entity_type"),
         Index("idx_embeddings_entity_id", "entity_id"),
     )
+
+
+class Job(Base):
+    __tablename__ = "jobs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=False)
+    requirements = Column(JSON, nullable=True)
+    location = Column(String, nullable=True)
+    location_city = Column(String, nullable=True)
+    location_country = Column(String, nullable=True)
+    remote = Column(Boolean, default=False, nullable=False)
+    is_remote = Column(Boolean, default=False, nullable=False)
+    hybrid = Column(Boolean, default=False, nullable=False)
+    min_experience = Column(Integer, nullable=True)
+    max_experience = Column(Integer, nullable=True)
+    key_responsibilities = Column(JSON, nullable=True)
+    key_requirements = Column(JSON, nullable=True)
+    department = Column(String, nullable=True)
+    seniority_level = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    required_skills = relationship("JobRequiredSkill", back_populates="job")
+
+
+class JobRequiredSkill(Base):
+    __tablename__ = "job_required_skills"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False)
+    skill_taxonomy_id = Column(Integer, ForeignKey("skill_taxonomy.id"), nullable=False)
+    importance = Column(String, nullable=False, default="REQUIRED")
+    skill_type = Column(String, nullable=False, default="TECHNICAL")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    job = relationship("Job", back_populates="required_skills")
+    skill = relationship("SkillTaxonomy")

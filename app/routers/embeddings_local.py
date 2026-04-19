@@ -46,8 +46,7 @@ async def generate_embedding(request: EmbeddingRequest):
     try:
         embedding = embedding_service.generate_embedding(
             text=request.text,
-            prefix_type="query", 
-            normalize=True
+            prefix_type="query",
         )
         
         return EmbeddingResponse(
